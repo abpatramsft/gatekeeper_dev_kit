@@ -1,0 +1,119 @@
+name: Feature Requirement Analysis
+
+on:
+  issues:
+    types: [labeled]
+
+# ──────────────────────────────────────────────────────────
+# Triggered when an issue receives the "gate-keeper" label.
+# Fetches the issue context and passes it to the council
+# for a thorough feature-requirement analysis including:
+#   - Detail sufficiency check against the codebase
+#   - Test scenario completeness
+#   - Missing information identification
+#   - Developer Readiness Score
+# ──────────────────────────────────────────────────────────
+
+jobs:
+  feature-requirement-analysis:
+    if: github.event.label.name == 'gate-keeper'
+    uses: ./.github/workflows/council-query.yml
+    with:
+      query: |
+        FEATURE REQUIREMENT ANALYSIS
+
+        You are a senior technical product manager and engineering lead. An issue has been
+        filed describing a new feature or change request. Your task is to evaluate whether
+        the issue is detailed enough for a developer to pick up and start implementation
+        immediately, given the current state of the codebase.
+
+        ═══════════════════════════════════════════════
+        ISSUE CONTEXT
+        ═══════════════════════════════════════════════
+        **Issue #${{ github.event.issue.number }}:** ${{ github.event.issue.title }}
+
+        **Author:** @${{ github.event.issue.user.login }}
+
+        **Labels:** ${{ join(github.event.issue.labels.*.name, ', ') }}
+
+        **Body:**
+        ${{ github.event.issue.body }}
+        ═══════════════════════════════════════════════
+
+        Analyse the issue above against the full codebase and produce a structured report
+        covering the following areas:
+
+        ---
+
+        ## 1. Requirement Clarity Assessment
+        - Is the feature clearly defined with unambiguous acceptance criteria?
+        - Are there vague or open-ended statements that need refinement?
+        - Are edge cases and error scenarios explicitly addressed?
+        - Is the scope well-bounded, or could it lead to scope creep?
+
+        ## 2. Codebase Impact Analysis
+        - Which existing files, modules, and functions will need to be modified?
+        - Are there any architectural constraints or patterns in the codebase that
+          the issue should acknowledge?
+        - Are there dependencies or integration points the issue fails to mention?
+        - Does the issue conflict with any existing functionality?
+
+        ## 3. Test Scenario Completeness
+        - Does the issue describe or imply test scenarios? List them.
+        - Identify ALL test scenarios that should be covered, including:
+          - Happy path / success cases
+          - Validation and error cases (invalid input, missing fields, etc.)
+          - Edge cases and boundary conditions
+          - Integration/API contract tests
+          - Security-related test cases (if applicable)
+        - Flag any test scenarios that are MISSING from the issue description.
+
+        ## 4. Missing Information & Recommendations
+        - List specific pieces of information that are absent but necessary:
+          - API contract details (request/response formats, status codes)
+          - UI/UX specifications (if frontend changes are involved)
+          - Data model changes (new fields, migrations, storage impact)
+          - Configuration or environment variable changes
+          - Performance requirements or constraints
+          - Error handling and logging expectations
+          - Documentation updates needed
+        - For each missing item, provide a suggested description or question
+          the author should answer.
+
+        ## 5. Suggested Additions to the Issue
+        Provide ready-to-use content the issue author can paste into the issue to
+        make it complete. This should include:
+        - Refined acceptance criteria (if the originals are weak)
+        - A proposed implementation checklist
+        - Test case checklist
+        - Any architectural notes or constraints to be aware of
+
+        ## 6. Developer Readiness Score
+
+        Rate the issue on a **1–10 scale** across these dimensions and compute an
+        overall Developer Readiness Score:
+
+        | Dimension                    | Score (1-10) | Justification |
+        |------------------------------|--------------|---------------|
+        | Requirement Clarity          |              |               |
+        | Acceptance Criteria Quality  |              |               |
+        | Test Scenario Coverage       |              |               |
+        | Technical Detail Sufficiency |              |               |
+        | Scope Definition             |              |               |
+        | **Overall Readiness Score**  |              |               |
+
+        **Score interpretation:**
+        - **8-10:** Ready for development — developer can start immediately.
+        - **5-7:** Needs minor clarifications — developer can start with some assumptions.
+        - **1-4:** Not ready — significant gaps must be addressed before development begins.
+
+        ## 7. Final Verdict
+        State one of:
+        - ✅ **READY FOR DEVELOPMENT** — Issue is comprehensive and well-defined.
+        - ⚠️ **NEEDS REFINEMENT** — Issue requires the listed clarifications before work begins.
+        - ❌ **NOT READY** — Issue is too vague or incomplete for development.
+
+        Be precise, reference file paths and line numbers from the codebase, and do not
+        fabricate information.
+      artifact_name: feature-requirement-analysis
+    secrets: inherit
