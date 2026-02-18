@@ -25,7 +25,7 @@ pip install -e .
 ### From a Git remote (no clone needed)
 
 ```bash
-pip install git+https://github.com/<owner>/gatekeeper_dev_kit.git
+pip install git+https://github.com/abpatramsft/gatekeeper_dev_kit.git
 ```
 
 > **Note:** The package is not yet published to PyPI. Use one of the methods above.
