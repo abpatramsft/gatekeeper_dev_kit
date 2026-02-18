@@ -134,7 +134,7 @@ def show_welcome():
         "peer-ranking and chairman synthesis.",
     )
     wf_table.add_row(
-        "feature-requirement.analysis.yml",
+        "feature-requirement-analysis.yml",
         "Triggered when an issue gets the [bold]gate-keeper[/] label.\n"
         "Performs a thorough feature-requirement analysis\n"
         "with a Developer Readiness Score.",

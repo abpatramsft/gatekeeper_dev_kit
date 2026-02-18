@@ -63,7 +63,7 @@ This copies three GitHub Actions workflow files into
 | Workflow | Purpose |
 |---|---|
 | `council-query.yml` | Multi-model AI council (GPT-4.1 + Claude Sonnet 4 + GPT-5-mini) with peer-ranking and chairman synthesis |
-| `feature-requirement.analysis.yml` | Issue-triggered feature-requirement analysis with a Developer Readiness Score |
+| `feature-requirement-analysis.yml` | Issue-triggered feature-requirement analysis with a Developer Readiness Score |
 | `gatekeeper.yml` | Full pipeline: requirement-drift, technical-excellence, test-coverage, and GO/NO-GO verdict |
 
 | Script | Purpose |
@@ -74,8 +74,17 @@ This copies three GitHub Actions workflow files into
 | `council_ci_runner.py` | CI runner for executing the council inside GitHub Actions |
 | `fetch-council-results.py` | Fetch & display council results from GitHub Actions artifacts |
 
-> **Important:** Set the `COPILOT_GITHUB_TOKEN` secret in your repository
-> settings for the workflows to function.
+### Required GitHub repository secrets
+
+Configure these secrets in your repository before running the workflows:
+
+| Secret | Required | Used by | Notes |
+|---|---|---|---|
+| `COPILOT_GITHUB_TOKEN` | Yes | `council-query.yml`, `gatekeeper.yml`, `feature-requirement-analysis.yml` | Required for all council-based analysis jobs. |
+| `CAST_IMAGING_API_KEY` | Optional (recommended) | `feature-requirement-analysis.yml` | Enables the CAST feature-impact sub-analysis job in the feature requirement pipeline. |
+| `IMAGING_CLOUD_API_KEY` | Required only if using CAST imaging workflow | `cast-imaging-analyzer.yml` | Needed for the standalone Imaging Cloud Analyzer workflow. |
+
+> **Important:** Without `COPILOT_GITHUB_TOKEN`, the main Gatekeeper council pipelines will not run.
 
 ### Fetch Copilot CLI session data
 

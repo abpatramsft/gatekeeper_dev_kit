@@ -19,7 +19,7 @@ console = Console()
 # Workflow files shipped inside the package
 WORKFLOW_FILES = [
     "council-query.yml",
-    "feature-requirement.analysis.yml",
+    "feature-requirement-analysis.yml",
     "gatekeeper.yml",
 ]
 
@@ -108,8 +108,10 @@ def run_init():
                 f"[bold green]Done![/] Added [bold]{len(wf_copied)}[/] workflow file(s) to "
                 f"[cyan].github/workflows/[/] and [bold]{len(sc_copied)}[/] script(s) to "
                 f"[cyan]scripts/[/].\n\n"
-                "[dim]Don't forget to set the [bold]COPILOT_GITHUB_TOKEN[/dim] repository secret "
-                "in your GitHub repo settings for the workflows to function.[/]",
+                "[bold]Repository secrets required for pipelines:[/]\n"
+                "• [bold]COPILOT_GITHUB_TOKEN[/] [dim](required for council-based workflows)[/]\n"
+                "• [bold]CAST_IMAGING_API_KEY[/] [dim](optional; enables CAST stage in feature requirement analysis)[/]\n"
+                "• [bold]IMAGING_CLOUD_API_KEY[/] [dim](required for cast-imaging-analyzer.yml)[/]",
                 border_style="green",
                 box=box.ROUNDED,
             )

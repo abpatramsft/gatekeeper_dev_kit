@@ -4,6 +4,11 @@ on:
   issues:
     types: [labeled]
 
+# Cancel redundant runs for the same issue
+concurrency:
+  group: feature-req-analysis-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
 # ──────────────────────────────────────────────────────────
 # Triggered when an issue receives the "gate-keeper" label.
 # Fetches the issue context and passes it to the council
@@ -15,8 +20,32 @@ on:
 # ──────────────────────────────────────────────────────────
 
 jobs:
-  feature-requirement-analysis:
+  # ── Gate check & secret detection ────────────────────────────────────
+  # Validates the label trigger and checks whether the CAST Imaging
+  # API key is configured so the CAST analysis can run conditionally.
+  # ─────────────────────────────────────────────────────────────────────
+  gate-check:
     if: github.event.label.name == 'gate-keeper'
+    runs-on: ubuntu-latest
+    outputs:
+      has_cast_key: ${{ steps.check.outputs.has_key }}
+    steps:
+      - name: Check for CAST Imaging API key
+        id: check
+        run: |
+          if [ -n "$CAST_KEY" ]; then
+            echo "has_key=true" >> "$GITHUB_OUTPUT"
+            echo "✅ CAST_IMAGING_API_KEY is configured — CAST analysis will run."
+          else
+            echo "has_key=false" >> "$GITHUB_OUTPUT"
+            echo "ℹ️  CAST_IMAGING_API_KEY not set — CAST analysis will be skipped."
+          fi
+        env:
+          CAST_KEY: ${{ secrets.CAST_IMAGING_API_KEY }}
+
+  # ── Council Analysis (runs in parallel) ──────────────────────────────
+  council-analysis:
+    needs: [gate-check]
     uses: ./.github/workflows/council-query.yml
     with:
       query: |
@@ -115,5 +144,94 @@ jobs:
 
         Be precise, reference file paths and line numbers from the codebase, and do not
         fabricate information.
-      artifact_name: feature-requirement-analysis
+      artifact_name: feature-req-council-results
     secrets: inherit
+
+  # ── CAST Feature Impact Analysis (runs in parallel, conditional) ─────
+  # Only runs when CAST_IMAGING_API_KEY is configured in repo secrets.
+  # ─────────────────────────────────────────────────────────────────────
+  cast-impact-analysis:
+    needs: [gate-check]
+    if: needs.gate-check.outputs.has_cast_key == 'true'
+    uses: ./.github/workflows/cast-feature-impact.yml
+    with:
+      feature_description: |
+        Issue #${{ github.event.issue.number }}: ${{ github.event.issue.title }}
+
+        ${{ github.event.issue.body }}
+      application_name: ''
+      artifact_name: feature-req-cast-results
+    secrets: inherit
+
+  # ── Combine Results ──────────────────────────────────────────────────
+  # Merges council results and CAST impact analysis (if available) into
+  # a single artifact for downstream consumption by fetch-council-results.py.
+  # ─────────────────────────────────────────────────────────────────────
+  combine-results:
+    needs: [council-analysis, cast-impact-analysis, gate-check]
+    if: always() && needs.council-analysis.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download council results
+        uses: actions/download-artifact@v4
+        with:
+          name: feature-req-council-results
+          path: /tmp/council-results
+
+      - name: Download CAST results
+        if: needs.cast-impact-analysis.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: feature-req-cast-results
+          path: /tmp/cast-results
+
+      - name: Combine council and CAST results
+        run: |
+          python3 << 'COMBINE_EOF'
+          import json
+          import os
+
+          # Load council results
+          council_path = "/tmp/council-results/council-results.json"
+          with open(council_path) as f:
+              combined = json.load(f)
+
+          # Load CAST impact analysis if available
+          cast_md_path = "/tmp/cast-results/impact-analysis.md"
+          if os.path.exists(cast_md_path):
+              with open(cast_md_path) as f:
+                  cast_content = f.read().strip()
+              combined["cast_impact_analysis"] = cast_content
+              print(f"✅ CAST impact analysis included ({len(cast_content)} chars)")
+          else:
+              combined["cast_impact_analysis"] = None
+              print("ℹ️  No CAST impact analysis available (skipped or not configured)")
+
+          # Write combined results
+          os.makedirs("/tmp/combined-results", exist_ok=True)
+          output_path = "/tmp/combined-results/council-results.json"
+          with open(output_path, "w") as f:
+              json.dump(combined, f, indent=2)
+          print(f"Combined results written ({os.path.getsize(output_path)} bytes)")
+
+          # Copy over other council artifact files
+          for fname in ["step_summary.md", "chairman_response.txt"]:
+              src = f"/tmp/council-results/{fname}"
+              dst = f"/tmp/combined-results/{fname}"
+              if os.path.exists(src):
+                  with open(src) as s, open(dst, "w") as d:
+                      d.write(s.read())
+
+          # Also copy the CAST markdown report as a standalone file
+          if os.path.exists(cast_md_path):
+              dst = "/tmp/combined-results/cast-impact-analysis.md"
+              with open(cast_md_path) as s, open(dst, "w") as d:
+                  d.write(s.read())
+          COMBINE_EOF
+
+      - name: Upload combined results
+        uses: actions/upload-artifact@v4
+        with:
+          name: feature-requirement-analysis
+          path: /tmp/combined-results/
+          retention-days: 90
