@@ -2,7 +2,7 @@
 
 import asyncio
 from typing import List, Dict, Any, Optional
-from copilot import CopilotClient
+from copilot import CopilotClient, PermissionHandler
 
 
 # Global client instance (managed lifecycle)
@@ -47,7 +47,10 @@ async def query_model(
         client = await get_client()
         
         # Create a session with the specified model
-        session = await client.create_session({"model": model})
+        session = await client.create_session({
+            "model": model,
+            "on_permission_request": PermissionHandler.approve_all,
+        })
         
         # Build the prompt from messages
         # For now, we'll concatenate messages into a single prompt
