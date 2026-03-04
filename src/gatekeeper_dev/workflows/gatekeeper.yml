@@ -1,16 +1,13 @@
 name: Gatekeeper Analysis
 
 on:
-  workflow_dispatch:
-    inputs:
-      frd_query:
-        description: 'Feature Requirement Document (FRD) text describing expected features'
-        required: true
-        type: string
+  pull_request:
+    types: [opened, synchronize, reopened]
 
 # ──────────────────────────────────────────────────────────
 # Pipeline:
-#   Step 1  (requirement-drift)      — Analyse FRD vs implemented features
+#   Step 0  (prepare-context)        — Extract PR + linked issue context
+#   Step 1  (requirement-drift)      — Analyse PR context vs implemented features
 #   Step 2  (technical-excellence)   — Code quality & architecture review
 #   Step 3  (unit-test-coverage)     — Test coverage analysis
 #   Steps 1-3 run in PARALLEL
@@ -21,26 +18,144 @@ on:
 
 jobs:
   # ════════════════════════════════════════════════════════
+  # STEP 0 — Prepare PR + Linked Issue Context
+  #          Extracts PR details, changed files, and linked issue info
+  # ════════════════════════════════════════════════════════
+  prepare-context:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: read
+      pull-requests: read
+    outputs:
+      combined_context: ${{ steps.combine.outputs.combined_context }}
+    steps:
+      - name: Build combined PR context
+        id: combine
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            // ── 1. Core PR information ──
+            let combined = [
+              '=== PULL REQUEST CONTEXT ===',
+              `PR #${pr.number}: ${pr.title}`,
+              `Author: ${pr.user.login}`,
+              `Branch: ${pr.head.ref} → ${pr.base.ref}`,
+              `State: ${pr.state}`,
+              `Labels: ${(pr.labels || []).map(l => l.name).join(', ') || 'None'}`,
+              `Created: ${pr.created_at}`,
+              `Updated: ${pr.updated_at}`,
+              '',
+              'PR Description:',
+              pr.body || '_No description provided._',
+            ].join('\n');
+
+            // ── 2. Changed files summary ──
+            core.info('Fetching changed files...');
+            const files = await github.paginate(
+              github.rest.pulls.listFiles,
+              { owner, repo, pull_number: pr.number, per_page: 100 },
+              (resp) => resp.data
+            );
+
+            combined += `\n\nChanged Files (${files.length} files):`;
+            for (const f of files) {
+              combined += `\n  - ${f.filename} (+${f.additions}, -${f.deletions}) [${f.status}]`;
+            }
+
+            // ── 3. PR review comments (if any) ──
+            const prComments = await github.rest.issues.listComments({
+              owner, repo, issue_number: pr.number, per_page: 20
+            });
+            if (prComments.data.length > 0) {
+              combined += '\n\nPR Conversation:';
+              for (const c of prComments.data) {
+                combined += `\n--- Comment by ${c.user.login} (${c.created_at}) ---\n${c.body}`;
+              }
+            }
+
+            combined += '\n=== END PULL REQUEST CONTEXT ===';
+
+            // ── 4. Detect and fetch linked issues ──
+            //    Matches: Fixes #N, Closes #N, Resolves #N (case-insensitive)
+            const issuePattern = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi;
+            const bodyText = pr.body || '';
+            const linkedIssues = new Set();
+            let match;
+            while ((match = issuePattern.exec(bodyText)) !== null) {
+              linkedIssues.add(parseInt(match[1]));
+            }
+
+            if (linkedIssues.size > 0) {
+              core.info(`Found ${linkedIssues.size} linked issue(s): ${[...linkedIssues].join(', ')}`);
+              for (const issueNum of linkedIssues) {
+                try {
+                  const issue = await github.rest.issues.get({
+                    owner, repo, issue_number: issueNum
+                  });
+                  const comments = await github.rest.issues.listComments({
+                    owner, repo, issue_number: issueNum, per_page: 20
+                  });
+
+                  let issueContext = [
+                    '',
+                    `=== LINKED ISSUE #${issue.data.number} ===`,
+                    `Title: ${issue.data.title}`,
+                    `State: ${issue.data.state}`,
+                    `Labels: ${issue.data.labels.map(l => l.name).join(', ') || 'None'}`,
+                    `Author: ${issue.data.user.login}`,
+                    `Created: ${issue.data.created_at}`,
+                    '',
+                    'Issue Description:',
+                    issue.data.body || '_No description provided._',
+                  ].join('\n');
+
+                  if (comments.data.length > 0) {
+                    issueContext += '\n\nIssue Comments:';
+                    for (const c of comments.data) {
+                      issueContext += `\n--- Comment by ${c.user.login} (${c.created_at}) ---\n${c.body}`;
+                    }
+                  }
+                  issueContext += `\n=== END LINKED ISSUE #${issue.data.number} ===`;
+                  combined += issueContext;
+                  core.info(`Fetched linked issue #${issueNum} successfully.`);
+                } catch (err) {
+                  core.warning(`Could not fetch linked issue #${issueNum}: ${err.message}`);
+                }
+              }
+            } else {
+              core.info('No linked issues detected in PR body.');
+            }
+
+            core.setOutput('combined_context', combined);
+            core.info(`Context built (${combined.length} chars).`);
+
+  # ════════════════════════════════════════════════════════
   # STEP 1 — Requirement Drift Analysis
   # ════════════════════════════════════════════════════════
   requirement-drift:
+    needs: [prepare-context]
     uses: ./.github/workflows/council-query.yml
     with:
       query: |
         REQUIREMENT DRIFT ANALYSIS
 
-        You are a senior product analyst. You have been given a Feature Requirement Document (FRD)
-        and access to the full codebase of the application. Your task is to perform a thorough
-        requirement drift analysis.
+        You are a senior product analyst. You have been given a Pull Request with full context
+        (including any linked GitHub issues) and access to the full codebase of the application.
+        Your task is to perform a thorough requirement drift analysis — verifying that the changes
+        in this PR correctly implement what is described in the PR and its linked issues.
 
-        === FEATURE REQUIREMENT DOCUMENT ===
-        ${{ inputs.frd_query }}
-        === END FRD ===
+        === PR & REQUIREMENT CONTEXT ===
+        ${{ needs.prepare-context.outputs.combined_context }}
+        === END CONTEXT ===
 
-        Analyse the codebase against the FRD above and produce a structured report covering:
+        Analyse the codebase against the context above and produce a structured report covering:
 
-        1. **Implemented Features** — List every FRD requirement that IS fully implemented.
-           For each, cite the exact files and functions that satisfy it.
+        1. **Implemented Features** — List every requirement from the PR / linked issues that
+           IS fully implemented. For each, cite the exact files and functions that satisfy it.
 
         2. **Partially Implemented Features** — Requirements where some acceptance criteria
            are met but others are missing. Detail what is done and what is not.
@@ -48,13 +163,13 @@ jobs:
         3. **Missing / Not Implemented Features** — Requirements with zero implementation.
            Suggest where in the codebase they should be added.
 
-        4. **Extra Features (not in FRD)** — Any functionality in the codebase that is NOT
-           described in the FRD. Note whether these are beneficial or unnecessary.
+        4. **Extra Features (not in PR scope)** — Any functionality in the changed files that is NOT
+           described in the PR or linked issues. Note whether these are beneficial or unnecessary.
 
         5. **Drift Summary Table** — A markdown table with columns:
            | Requirement ID | Title | Status | Coverage % | Notes |
 
-        6. **Overall Completion Rate** — Percentage of FRD requirements fully satisfied.
+        6. **Overall Completion Rate** — Percentage of PR / issue requirements fully satisfied.
 
         Be precise, reference file paths and line numbers, and do not fabricate information.
       artifact_name: gatekeeper-step1-requirement-drift
@@ -215,7 +330,7 @@ jobs:
   # FINAL — Bundle all artifacts into a single download
   # ════════════════════════════════════════════════════════
   final-report:
-    needs: [requirement-drift, technical-excellence, unit-test-coverage, production-readiness]
+    needs: [prepare-context, requirement-drift, technical-excellence, unit-test-coverage, production-readiness]
     runs-on: ubuntu-latest
     if: always()
     permissions:
@@ -252,7 +367,7 @@ jobs:
 
       - name: Build consolidated gatekeeper report
         env:
-          FRD_INPUT: ${{ inputs.frd_query }}
+          PR_CONTEXT: ${{ needs.prepare-context.outputs.combined_context }}
           CHAIRMAN_1: ${{ needs.requirement-drift.outputs.chairman_response }}
           CHAIRMAN_2: ${{ needs.technical-excellence.outputs.chairman_response }}
           CHAIRMAN_3: ${{ needs.unit-test-coverage.outputs.chairman_response }}
@@ -289,7 +404,7 @@ jobs:
           # Build the consolidated JSON report
           consolidated = {
               "generated_at": datetime.now(timezone.utc).isoformat(),
-              "frd_input": os.environ.get("FRD_INPUT", ""),
+              "pr_context": os.environ.get("PR_CONTEXT", ""),
               "steps": {},
               "chairman_summaries": {},
           }
@@ -352,7 +467,7 @@ jobs:
       - name: Publish gatekeeper summary
         if: always()
         env:
-          FRD_INPUT: ${{ inputs.frd_query }}
+          PR_CONTEXT: ${{ needs.prepare-context.outputs.combined_context }}
           CHAIRMAN_1: ${{ needs.requirement-drift.outputs.chairman_response }}
           CHAIRMAN_2: ${{ needs.technical-excellence.outputs.chairman_response }}
           CHAIRMAN_3: ${{ needs.unit-test-coverage.outputs.chairman_response }}
@@ -361,7 +476,7 @@ jobs:
           {
             echo "# 🛡️ Gatekeeper Analysis — Final Report"
             echo ""
-            printf '> **FRD Input:** %.200s...\n' "$FRD_INPUT"
+            printf '> **PR Context:** %.200s...\n' "$PR_CONTEXT"
             echo ""
 
             echo "---"
